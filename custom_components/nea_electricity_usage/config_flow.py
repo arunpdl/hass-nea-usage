@@ -19,14 +19,18 @@ class ElectricityUsageFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         """Initialize the flow."""
         self._access_token = None
         self._meter_choices = None
+        self._username = None
+        self._password = None
+        self._client_secret = None
 
     async def async_step_user(self, user_input=None):
         """Handle the initial step."""
         errors = {}
         if user_input is not None:
             # Fetch the access token
+            client_secret = user_input.get("client_secret", CLIENT_SECRET)
             access_token = await self._fetch_access_token(
-                user_input["username"], user_input["password"]
+                user_input["username"], user_input["password"], client_secret
             )
 
             if access_token:
@@ -36,6 +40,9 @@ class ElectricityUsageFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                 if meters:
                     # Store the access token and meter choices in instance variables
                     self._access_token = access_token
+                    self._username = user_input["username"]
+                    self._password = user_input["password"]
+                    self._client_secret = client_secret
                     self._meter_choices = {
                         meter["meterId"]: f"{meter['consumerName']} - {meter['scNum']}"
                         for meter in meters
@@ -52,6 +59,7 @@ class ElectricityUsageFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
             {
                 vol.Required("username"): str,
                 vol.Required("password"): str,
+                vol.Optional("client_secret"): str,
             }
         )
 
@@ -75,6 +83,9 @@ class ElectricityUsageFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                     data={
                         "access_token": self._access_token,
                         "data_url": data_url,
+                        "username": self._username,
+                        "password": self._password,
+                        "client_secret": self._client_secret,
                     },
                 )
 
@@ -90,14 +101,14 @@ class ElectricityUsageFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="select_meter", data_schema=data_schema, errors=errors
         )
 
-    async def _fetch_access_token(self, username, password):
+    async def _fetch_access_token(self, username, password, client_secret=CLIENT_SECRET):
         """Fetch the access token using username and password."""
         session = aiohttp_client.async_get_clientsession(self.hass)
         payload = {
             "username": username,
             "password": password,
             "client_id": CLIENT_ID,
-            "client_secret": CLIENT_SECRET,
+            "client_secret": client_secret,
             "grant_type": "password",
         }
         
