@@ -28,6 +28,8 @@ A [Home Assistant](https://www.home-assistant.io/) custom integration to display
 
 ## Installation
 
+### Manual Installation
+
 1. Install this integration by creating a `custom_components` directory in your Home Assistant configuration directory, if it does not already exist. Then, copy the `nea_electricity_usage` directory from this repository to the `custom_components` directory.
 
 2. (Optional) Copy `www/electricity-usage-card.js` to `www` directory in your Home Assistant configuration directory. Make sure to load this file as resource under Home Assistant Settings. This file is required to display the custom chart card. This step is optional and any other chart libraries can be used to display the data.
