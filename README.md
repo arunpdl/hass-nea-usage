@@ -28,6 +28,12 @@ A [Home Assistant](https://www.home-assistant.io/) custom integration to display
 
 ## Installation
 
+### Using HACS
+
+1. Install this integration using HACS by adding this custom repo as integration `https://github.com/arunpdl/hass-nea-usage` to HACS
+
+2. Restart Home Assistant
+
 ### Manual Installation
 
 1. Install this integration by creating a `custom_components` directory in your Home Assistant configuration directory, if it does not already exist. Then, copy the `nea_electricity_usage` directory from this repository to the `custom_components` directory.
@@ -50,7 +56,7 @@ Once the component has been installed, you need to configure it using the web in
 1. Go to "Settings->Devices & Services".
 2. Click "+ Add Integration".
 3. Search for "NEA Electricity Usage".
-4. Enter your NEA Username and Password. This can be obtained by using the NEA app on [Android](https://play.google.com/store/apps/details?id=com.nepalelectricityauthority.nea&hl=en) or [iOS](https://apps.apple.com/np/app/nea-official/id1639332704).
+4. Enter your NEA Username and Password. This can be obtained by registering in the NEA app on [Android](https://play.google.com/store/apps/details?id=com.nepalelectricityauthority.nea&hl=en) or [iOS](https://apps.apple.com/np/app/nea-official/id1639332704).
    ![alt text](images/sign-in.png)
 5. Select your meter from the list of meters.
    ![alt text](images/select-meter.png)
