@@ -8,6 +8,12 @@ import logging
 
 _LOGGER = logging.getLogger(__name__)
 
+# NEA's server uses a certificate that can't be verified against standard
+# CA bundles. Creating a permissive SSL context for all NEA API calls.
+_NEA_SSL_CONTEXT = ssl.create_default_context()
+_NEA_SSL_CONTEXT.check_hostname = False
+_NEA_SSL_CONTEXT.verify_mode = ssl.CERT_NONE
+
 
 class ElectricityUsageFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for electricity usage."""
@@ -116,7 +122,8 @@ class ElectricityUsageFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
             async with session.post(
                 LOGIN_URL,
                 json=payload,
-                timeout=30
+                timeout=30,
+                ssl=_NEA_SSL_CONTEXT
             ) as response:
                 _LOGGER.debug(f"Login response status: {response.status}")
                 if response.status == 200:
@@ -145,7 +152,8 @@ class ElectricityUsageFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
             async with session.get(
                 "https://app.nea.org.np/api/v1/meters/my-meters",
                 headers=headers,
-                timeout=30
+                timeout=30,
+                ssl=_NEA_SSL_CONTEXT
             ) as response:
                 if response.status == 200:
                     data = await response.json()
