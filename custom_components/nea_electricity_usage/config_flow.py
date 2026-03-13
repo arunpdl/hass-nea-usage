@@ -5,6 +5,7 @@ from homeassistant.core import callback
 from homeassistant.helpers import aiohttp_client
 from .const import DOMAIN, LOGIN_URL, CLIENT_ID, CLIENT_SECRET
 import logging
+import ssl
 
 _LOGGER = logging.getLogger(__name__)
 
