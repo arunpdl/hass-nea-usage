@@ -75,7 +75,8 @@ class ElectricityUsageCoordinator(DataUpdateCoordinator):
             async with self._session.get(
                 self._data_url, 
                 headers=headers,
-                timeout=30
+                timeout=30,
+                ssl=False
             ) as response:
                 if response.status == 200:
                     data = await response.json()
