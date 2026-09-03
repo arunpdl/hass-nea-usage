@@ -13,11 +13,13 @@ from homeassistant.helpers.update_coordinator import (
     UpdateFailed,
 )
 from homeassistant.helpers import aiohttp_client
+from homeassistant.util import slugify
 from datetime import timedelta
 import logging
 import aiohttp
 
 from .api import fetch_access_token
+from .nepali_calendar import bs_month_to_gregorian_start
 from .const import (
     DOMAIN,
     CLIENT_SECRET,
@@ -109,7 +111,55 @@ class ElectricityUsageCoordinator(DataUpdateCoordinator):
         if result is None:
             raise UpdateFailed("No data received from NEA")
 
+        self._update_statistics(result)
         return result
+
+    def _update_statistics(self, data: dict) -> None:
+        """Backfill long-term statistics from NEA's own monthly history.
+
+        NEA's API already returns a year or so of past months in a single
+        response - rather than waiting for that trend to slowly accumulate
+        via ordinary polling, push it straight into HA's statistics store
+        so a native `statistics-graph` card can chart it immediately, with
+        no custom card and no extra dependency. Re-running this on every
+        poll just upserts the same months, so it stays correct even if NEA
+        revises a past figure.
+        """
+        if "recorder" not in self.hass.config.components:
+            return  # recorder disabled - nothing to backfill into
+
+        from homeassistant.components.recorder.statistics import (
+            async_add_external_statistics,
+        )
+
+        meter_name = data.get("meter_name", "unknown")
+        meter_slug = slugify(meter_name)
+        fields = {
+            "consumed_units": ("Consumed Units", "kWh"),
+            "bill_amount": ("Bill Amount", "NPR"),
+        }
+
+        for field, (label, unit) in fields.items():
+            points = []
+            for item in data.get("meter_analytics", []):
+                start = bs_month_to_gregorian_start(item["month"])
+                value = item.get(field)
+                if start is None or value is None:
+                    continue
+                points.append({"start": start, "mean": value, "min": value, "max": value})
+
+            if not points:
+                continue
+
+            metadata = {
+                "has_mean": True,
+                "has_sum": False,
+                "name": f"{meter_name} {label}",
+                "source": DOMAIN,
+                "statistic_id": f"{DOMAIN}:{meter_slug}_{field}",
+                "unit_of_measurement": unit,
+            }
+            async_add_external_statistics(self.hass, metadata, points)
 
     async def _request(self, access_token: str):
         """Make one authenticated request. Returns _UNAUTHORIZED, None, or processed data."""
@@ -312,9 +362,14 @@ class ElectricityMonthlyDataSensor(BaseElectricitySensor):
 
     @property
     def native_value(self):
-        """Return the current month's consumed units."""
+        """Return the current month's consumed units.
+
+        meter_analytics is sorted oldest-first, so the latest month is the
+        last entry, not the first - using [0] here was a bug (it reported
+        the oldest month in the response despite the sensor's name).
+        """
         if self.coordinator.data and self.coordinator.data.get("meter_analytics"):
-            return self.coordinator.data["meter_analytics"][0]["consumed_units"]
+            return self.coordinator.data["meter_analytics"][-1]["consumed_units"]
         return None
 
     @property
