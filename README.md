@@ -100,8 +100,8 @@ Settings → Devices & Services → NEA Electricity Usage → your meter's devic
 ### Charting usage over time
 
 `Current Month Usage` is a normal HA sensor with a `state_class`, so it
-works with the built-in statistics/history cards - no custom card or extra
-dependency required:
+works with the built-in statistics/history cards for *future* months as
+they're polled - no custom card or extra dependency required:
 
 ```yaml
 type: statistics-graph
@@ -112,10 +112,37 @@ stat_types:
   - mean
 ```
 
+NEA's API already hands back a year or so of *past* months in one response
+though, so you don't have to wait for that history to build up: every poll
+also backfills each month's Consumed Units and Bill Amount straight into
+HA's own long-term statistics, under `nea_electricity_usage:<meter>_consumed_units`
+and `nea_electricity_usage:<meter>_bill_amount`. Point a `statistics-graph`
+card at those directly (a plain string is a valid `entities` entry - see the
+[card's docs](https://www.home-assistant.io/dashboards/statistics-graph/)) to
+get the full historical trend immediately, self-maintaining as new months
+arrive:
+
+```yaml
+type: statistics-graph
+title: Monthly Usage & Cost
+entities:
+  - nea_electricity_usage:sirjana_paudel_consumed_units
+  - nea_electricity_usage:sirjana_paudel_bill_amount
+stat_types:
+  - mean
+```
+
+(Replace `sirjana_paudel` with your own meter name, slugified - check
+Developer Tools → Statistics in HA to find the exact ID.) Because NEA
+reports months in the Nepali (Bikram Sambat) calendar, each month is placed
+on the chart's real time axis using an approximate BS→Gregorian conversion
+(month-level accuracy, +/- roughly two weeks - see `nepali_calendar.py`),
+not an exact day-for-day mapping.
+
 If you want the raw month-by-month breakdown NEA returns (bill amount,
-rebate, status, ...) rather than just the chartable number, it's available
-as the `monthly_data` attribute on that same sensor - handy for a
-`markdown` card or a template.
+rebate, status, ...) rather than just the chartable numbers, it's available
+as the `monthly_data` attribute on the `Current Month Usage` sensor - handy
+for a `markdown` card or a template.
 
 ## API Information
 
