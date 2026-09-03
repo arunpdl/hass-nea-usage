@@ -18,13 +18,20 @@ A [Home Assistant](https://www.home-assistant.io/) custom integration to display
 - SC Number
 - Total Bill Amount (NPR)
 - Total Bill Due (NPR)
-- Monthly Data
+- Current Month Usage (kWh) - state tracked as a normal HA statistic (see
+  [Charting usage over time](#charting-usage-over-time)), plus the full
+  per-month history as a `monthly_data` attribute:
   - Month
   - Status
   - Unit Consumption
   - Bill Amount (NPR)
   - Payable Amount (NPR)
   - Rebate Amount (NPR)
+
+Entity names no longer repeat the meter name (e.g. `Total Bill Amount`
+instead of `Total Bill Amount <meter name>`) - each meter is its own HA
+device, and the device name (your consumer/meter name) is what
+distinguishes entities across multiple meters.
 
 ## Installation
 
@@ -38,16 +45,7 @@ A [Home Assistant](https://www.home-assistant.io/) custom integration to display
 
 1. Install this integration by creating a `custom_components` directory in your Home Assistant configuration directory, if it does not already exist. Then, copy the `nea_electricity_usage` directory from this repository to the `custom_components` directory.
 
-2. (Optional) Copy `www/electricity-usage-card.js` to `www` directory in your Home Assistant configuration directory. Make sure to load this file as resource under Home Assistant Settings. This file is required to display the custom chart card. This step is optional and any other chart libraries can be used to display the data.
-
-```yaml
-lovelace:
-resources:
-  - url: /local/electricity-usage-chart.js?v=2
-    type: module
-```
-
-3. Restart Home Assistant
+2. Restart Home Assistant
 
 ## Configuration
 
@@ -61,6 +59,19 @@ Once the component has been installed, you need to configure it using the web in
 5. Select your meter from the list of meters.
    ![alt text](images/select-meter.png)
 
+Re-authentication is automatic: if NEA's access token expires, the
+integration silently logs back in with the username/password you entered
+above. If NEA later rejects those saved credentials outright (e.g. you
+changed your password), Home Assistant will prompt you to re-enter them via
+its normal repair/reauth flow instead of leaving every entity unavailable.
+
+### Options
+
+Click "Configure" on the integration to change how often it polls NEA
+(default: every 6 hours - NEA billing data changes at most monthly, so
+there's little reason to poll more often than that, but it's adjustable
+from 1 to 72 hours).
+
 ## Examples
 
 ### Card Configuration
@@ -70,26 +81,41 @@ Once the component has been installed, you need to configure it using the web in
 ```yaml
 type: entities
 entities:
-  - entity: sensor.meter_name_meter_owner
+  - entity: sensor.meter_name
     name: Owner Name
-  - entity: sensor.consumer_id_meter_owner
+  - entity: sensor.consumer_id
     name: Consumer ID
-  - entity: sensor.sc_number_meter_owner
+  - entity: sensor.sc_number
     name: SC Number
-  - entity: sensor.total_bill_amount_meter_owner
+  - entity: sensor.total_bill_amount
     name: Total Bill Due
-  - entity: sensor.monthly_data_meter_owner
+  - entity: sensor.current_month_usage
     name: Units Consumed
 title: Electricity Consumption
 ```
 
-- Display monthly data in a chart (needs custom card)
+(Use whatever entity IDs your own install actually assigned - check
+Settings → Devices & Services → NEA Electricity Usage → your meter's device.)
+
+### Charting usage over time
+
+`Current Month Usage` is a normal HA sensor with a `state_class`, so it
+works with the built-in statistics/history cards - no custom card or extra
+dependency required:
 
 ```yaml
-type: custom:electricity-usage-chart
-entity: sensor.monthly_data_meter_owner
+type: statistics-graph
 title: Monthly Electricity Usage
+entities:
+  - sensor.current_month_usage
+stat_types:
+  - mean
 ```
+
+If you want the raw month-by-month breakdown NEA returns (bill amount,
+rebate, status, ...) rather than just the chartable number, it's available
+as the `monthly_data` attribute on that same sensor - handy for a
+`markdown` card or a template.
 
 ## API Information
 
