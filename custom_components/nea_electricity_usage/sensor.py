@@ -60,6 +60,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
             ElectricityConsumerIDSensor(coordinator, meter_name),
             ElectricityScNumSensor(coordinator, meter_name),
             ElectricityMonthlyDataSensor(coordinator, meter_name),
+            ElectricityMonthlyBillSensor(coordinator, meter_name),
         ])
 
     async_add_entities(entities, True)
@@ -380,3 +381,32 @@ class ElectricityMonthlyDataSensor(BaseElectricitySensor):
                 "monthly_data": self.coordinator.data.get("meter_analytics", [])
             }
         return {}
+
+class ElectricityMonthlyBillSensor(BaseElectricitySensor):
+    """Sensor for the current month's bill amount.
+
+    Mirrors ElectricityMonthlyDataSensor (consumed units) but for cost -
+    exists mainly so usage and cost each have a real entity with their own
+    state_class, letting a dual-axis chart card (e.g. apexcharts-card's
+    documented `statistics:` series option) plot both together the same
+    way its own multi-y-axis examples do, rather than needing one of them
+    to be an external-only statistic.
+    """
+
+    _attr_name = "Current Month Bill"
+
+    def __init__(self, coordinator, meter_name):
+        super().__init__(coordinator, meter_name)
+        self._attr_unique_id = f"{DOMAIN}_{meter_name}_monthly_bill"
+        # MONETARY device_class only validates against state_class TOTAL, not
+        # MEASUREMENT (matches ElectricityTotalBillSensor's pairing below).
+        self._attr_device_class = SensorDeviceClass.MONETARY
+        self._attr_state_class = SensorStateClass.TOTAL
+        self._attr_native_unit_of_measurement = "NPR"
+
+    @property
+    def native_value(self):
+        """Return the current month's bill amount (meter_analytics is oldest-first)."""
+        if self.coordinator.data and self.coordinator.data.get("meter_analytics"):
+            return self.coordinator.data["meter_analytics"][-1]["bill_amount"]
+        return None
