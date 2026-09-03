@@ -128,13 +128,13 @@ arrive:
 type: statistics-graph
 title: Monthly Usage & Cost
 entities:
-  - nea_electricity_usage:sirjana_paudel_consumed_units
-  - nea_electricity_usage:sirjana_paudel_bill_amount
+  - nea_electricity_usage:ram_consumed_units
+  - nea_electricity_usage:ram_bill_amount
 stat_types:
   - mean
 ```
 
-(Replace `sirjana_paudel` with your own meter name, slugified - check
+(Replace `ram bahadur` with your own meter name, slugified - check
 Developer Tools → Statistics in HA to find the exact ID.) Because NEA
 reports months in the Nepali (Bikram Sambat) calendar, each month is placed
 on the chart's real time axis using an approximate BS→Gregorian conversion
