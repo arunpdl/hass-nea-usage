@@ -5,14 +5,25 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity, DataUpdateCoordinator
-from homeassistant.helpers import aiohttp_client, json
+from homeassistant.helpers.update_coordinator import (
+    CoordinatorEntity,
+    DataUpdateCoordinator,
+    UpdateFailed,
+)
+from homeassistant.helpers import aiohttp_client
 from datetime import timedelta
 import logging
 import aiohttp
 
-from .const import DOMAIN, DEFAULT_SCAN_INTERVAL
+from .api import fetch_access_token
+from .const import (
+    DOMAIN,
+    CLIENT_SECRET,
+    CONF_SCAN_INTERVAL_HOURS,
+    DEFAULT_SCAN_INTERVAL_HOURS,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -21,12 +32,15 @@ NEPALI_MONTHS_ORDER = [
     "Kartik", "Mangsir", "Poush", "Magh", "Falgun", "Chaitra"
 ]
 
+# Sentinel distinguishing "got a 401" from "no data" in the request layer,
+# so the coordinator knows when it's worth trying to re-authenticate.
+_UNAUTHORIZED = object()
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
     """Set up the electricity usage sensors from a config entry."""
-    access_token = entry.data["access_token"]
-    data_url = entry.data["data_url"]
-    coordinator = ElectricityUsageCoordinator(hass, access_token, data_url)
-    
+    coordinator = ElectricityUsageCoordinator(hass, entry)
+
     try:
         await coordinator.async_config_entry_first_refresh()
     except Exception as err:
@@ -36,7 +50,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     entities = []
     if coordinator.data:
         meter_name = coordinator.data.get("meter_name", "unknown")
-        
+
         entities.extend([
             ElectricityTotalBillSensor(coordinator, meter_name),
             ElectricityTotalDuesSensor(coordinator, meter_name),
@@ -49,31 +63,65 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     async_add_entities(entities, True)
 
 class ElectricityUsageCoordinator(DataUpdateCoordinator):
-    """Coordinator to manage fetching electricity usage data."""
+    """Coordinator to manage fetching electricity usage data.
 
-    def __init__(self, hass: HomeAssistant, access_token: str, data_url: str):
+    Re-authenticates automatically (using the username/password saved at
+    setup time) when NEA's access token expires, instead of leaving every
+    entity permanently unavailable after the first 401.
+    """
+
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry):
         """Initialize the coordinator."""
+        scan_hours = entry.options.get(CONF_SCAN_INTERVAL_HOURS, DEFAULT_SCAN_INTERVAL_HOURS)
         super().__init__(
             hass,
             _LOGGER,
             name=DOMAIN,
-            update_interval=timedelta(seconds=DEFAULT_SCAN_INTERVAL),
+            update_interval=timedelta(hours=scan_hours),
         )
-        self._access_token = access_token
-        self._data_url = data_url
+        self.entry = entry
         self._session = aiohttp_client.async_get_clientsession(hass)
 
     async def _async_update_data(self):
-        """Fetch data from API."""
+        """Fetch data from API, transparently re-logging in once if the token expired."""
+        result = await self._request(self.entry.data["access_token"])
+
+        if result is _UNAUTHORIZED:
+            _LOGGER.info("NEA access token expired, logging in again")
+            new_token = await fetch_access_token(
+                self._session,
+                self.entry.data["username"],
+                self.entry.data["password"],
+                self.entry.data.get("client_secret") or CLIENT_SECRET,
+            )
+            if not new_token:
+                # Stored username/password no longer work - this needs a human,
+                # so surface it as a reauth prompt instead of silently failing forever.
+                raise ConfigEntryAuthFailed("Re-authentication with NEA failed")
+
+            self.hass.config_entries.async_update_entry(
+                self.entry, data={**self.entry.data, "access_token": new_token}
+            )
+            result = await self._request(new_token)
+            if result is _UNAUTHORIZED:
+                raise ConfigEntryAuthFailed("NEA rejected refreshed credentials")
+
+        if result is None:
+            raise UpdateFailed("No data received from NEA")
+
+        return result
+
+    async def _request(self, access_token: str):
+        """Make one authenticated request. Returns _UNAUTHORIZED, None, or processed data."""
         headers = {
-            "Authorization": f"Bearer {self._access_token}",
+            "Authorization": f"Bearer {access_token}",
             "Accept": "application/json",
             "Content-Type": "application/json"
         }
-        
+
         try:
             async with self._session.get(
-                self._data_url, 
+                self.entry.data["data_url"],
                 headers=headers,
                 timeout=30,
                 ssl=False
@@ -85,16 +133,12 @@ class ElectricityUsageCoordinator(DataUpdateCoordinator):
                         return None
                     return self._process_data(data['data'])
                 elif response.status == 401:
-                    _LOGGER.error("Authentication failed - token might be expired")
-                    return None
+                    return _UNAUTHORIZED
                 else:
                     _LOGGER.error(f"Failed to fetch data: {response.status}")
                     return None
         except aiohttp.ClientError as err:
             _LOGGER.error(f"Error fetching data: {err}")
-            return None
-        except Exception as err:
-            _LOGGER.error(f"Unexpected error: {err}")
             return None
 
     def _process_data(self, data):
@@ -138,6 +182,8 @@ class ElectricityUsageCoordinator(DataUpdateCoordinator):
 class BaseElectricitySensor(CoordinatorEntity, SensorEntity):
     """Base class for electricity sensors."""
 
+    _attr_has_entity_name = True
+
     def __init__(self, coordinator: ElectricityUsageCoordinator, meter_name: str):
         """Initialize the sensor."""
         super().__init__(coordinator)
@@ -145,10 +191,16 @@ class BaseElectricitySensor(CoordinatorEntity, SensorEntity):
 
     @property
     def device_info(self):
-        """Return device information."""
+        """Return device information.
+
+        The device's own name already carries the meter/consumer name, so
+        (with has_entity_name=True) HA prefixes every entity's short name
+        with it automatically - no need to repeat the meter name inside
+        each entity's own name too.
+        """
         return {
             "identifiers": {(DOMAIN, self._meter_name)},
-            "name": f"Electricity Meter {self._meter_name}",
+            "name": self._meter_name,
             "manufacturer": "NEA",
             "model": "Smart Meter",
         }
@@ -156,10 +208,11 @@ class BaseElectricitySensor(CoordinatorEntity, SensorEntity):
 class ElectricityTotalBillSensor(BaseElectricitySensor):
     """Sensor for total bill amount."""
 
+    _attr_name = "Total Bill Amount"
+
     def __init__(self, coordinator, meter_name):
         super().__init__(coordinator, meter_name)
         self._attr_unique_id = f"{DOMAIN}_{meter_name}_total_bill_amount"
-        self._attr_name = f"Total Bill Amount {meter_name}"
         self._attr_device_class = SensorDeviceClass.MONETARY
         self._attr_state_class = SensorStateClass.TOTAL
         self._attr_native_unit_of_measurement = "NPR"
@@ -174,10 +227,11 @@ class ElectricityTotalBillSensor(BaseElectricitySensor):
 class ElectricityTotalDuesSensor(BaseElectricitySensor):
     """Sensor for total dues amount."""
 
+    _attr_name = "Total Dues Amount"
+
     def __init__(self, coordinator, meter_name):
         super().__init__(coordinator, meter_name)
         self._attr_unique_id = f"{DOMAIN}_{meter_name}_total_dues_amount"
-        self._attr_name = f"Total Dues Amount {meter_name}"
         self._attr_device_class = SensorDeviceClass.MONETARY
         self._attr_state_class = SensorStateClass.TOTAL
         self._attr_native_unit_of_measurement = "NPR"
@@ -192,10 +246,11 @@ class ElectricityTotalDuesSensor(BaseElectricitySensor):
 class ElectricityMeterNameSensor(BaseElectricitySensor):
     """Sensor for meter name."""
 
+    _attr_name = "Meter Name"
+
     def __init__(self, coordinator, meter_name):
         super().__init__(coordinator, meter_name)
         self._attr_unique_id = f"{DOMAIN}_{meter_name}_meter_name"
-        self._attr_name = f"Meter Name {meter_name}"
 
     @property
     def native_value(self):
@@ -207,10 +262,11 @@ class ElectricityMeterNameSensor(BaseElectricitySensor):
 class ElectricityConsumerIDSensor(BaseElectricitySensor):
     """Sensor for consumer ID."""
 
+    _attr_name = "Consumer ID"
+
     def __init__(self, coordinator, meter_name):
         super().__init__(coordinator, meter_name)
         self._attr_unique_id = f"{DOMAIN}_{meter_name}_consumer_id"
-        self._attr_name = f"Consumer ID {meter_name}"
 
     @property
     def native_value(self):
@@ -222,10 +278,11 @@ class ElectricityConsumerIDSensor(BaseElectricitySensor):
 class ElectricityScNumSensor(BaseElectricitySensor):
     """Sensor for SC number."""
 
+    _attr_name = "SC Number"
+
     def __init__(self, coordinator, meter_name):
         super().__init__(coordinator, meter_name)
         self._attr_unique_id = f"{DOMAIN}_{meter_name}_sc_num"
-        self._attr_name = f"SC Number {meter_name}"
 
     @property
     def native_value(self):
@@ -235,31 +292,36 @@ class ElectricityScNumSensor(BaseElectricitySensor):
         return None
 
 class ElectricityMonthlyDataSensor(BaseElectricitySensor):
-    """Sensor for monthly analytics data."""
+    """Sensor for the current month's consumption.
+
+    The full per-month history is still available as the `monthly_data`
+    attribute for anyone who wants it (automations, templates, the old
+    custom card), but the sensor's own state/state_class are now set up
+    so HA's native long-term statistics track it too - point this at a
+    built-in `statistics-graph` card and you get a real trend chart with
+    no custom card or extra dependency required.
+    """
+
+    _attr_name = "Current Month Usage"
 
     def __init__(self, coordinator, meter_name):
         super().__init__(coordinator, meter_name)
         self._attr_unique_id = f"{DOMAIN}_{meter_name}_monthly_data"
-        self._attr_name = f"Monthly Data {meter_name}"
+        self._attr_state_class = SensorStateClass.MEASUREMENT
+        self._attr_native_unit_of_measurement = "kWh"
 
     @property
     def native_value(self):
-        """Return the current month's data."""
+        """Return the current month's consumed units."""
         if self.coordinator.data and self.coordinator.data.get("meter_analytics"):
-            # Return the most recent month's consumed units
             return self.coordinator.data["meter_analytics"][0]["consumed_units"]
         return None
 
     @property
     def extra_state_attributes(self):
-        """Return the monthly analytics data as attributes."""
+        """Return the full monthly analytics history as attributes."""
         if self.coordinator.data:
             return {
                 "monthly_data": self.coordinator.data.get("meter_analytics", [])
             }
         return {}
-
-    @property
-    def native_unit_of_measurement(self):
-        """Return the unit of measurement."""
-        return "kWh"
