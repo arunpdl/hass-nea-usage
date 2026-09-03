@@ -18,9 +18,11 @@ A [Home Assistant](https://www.home-assistant.io/) custom integration to display
 - SC Number
 - Total Bill Amount (NPR)
 - Total Bill Due (NPR)
-- Current Month Usage (kWh) - state tracked as a normal HA statistic (see
-  [Charting usage over time](#charting-usage-over-time)), plus the full
-  per-month history as a `monthly_data` attribute:
+- Current Month Usage (kWh) and Current Month Bill (NPR) - each a normal HA
+  sensor with its own `state_class`, so both can go on the same dual-axis
+  chart card (see [Charting usage over time](#charting-usage-over-time)).
+  The full per-month history is on `Current Month Usage` as a
+  `monthly_data` attribute:
   - Month
   - Status
   - Unit Consumption
