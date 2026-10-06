@@ -3,6 +3,12 @@ from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorStateClass,
 )
+try:
+    from homeassistant.components.recorder.models import StatisticMeanType
+    _MEAN_TYPE = StatisticMeanType.ARITHMETIC
+except ImportError:
+    _MEAN_TYPE = None
+
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
@@ -160,6 +166,8 @@ class ElectricityUsageCoordinator(DataUpdateCoordinator):
                 "statistic_id": f"{DOMAIN}:{meter_slug}_{field}",
                 "unit_of_measurement": unit,
             }
+            if _MEAN_TYPE is not None:
+                metadata["mean_type"] = _MEAN_TYPE
             async_add_external_statistics(self.hass, metadata, points)
 
     async def _request(self, access_token: str):
